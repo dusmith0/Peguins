@@ -1,0 +1,286 @@
+---
+title: "Penguin Code"
+author: "Dustin Smith"
+date: "2026-06-08"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### Packages
+```{r}
+library("ggplot2")
+library("dplyr")
+library("rlang")
+library("patchwork")
+library("nnet")
+
+## Seed set to 1497
+set.seed(1497)
+
+## Useful Functions:
+## Hot encoding:
+
+hot <- function(data){
+  hots = 0
+  for(i in 1:length(data)){
+    if(data[i] == "Adelie"){
+      hots[i] <- 1
+    } else if(data[i] == "Chinstrap"){
+      hots[i] <- 2
+    } else if(data[i] == "Gentoo"){
+      hots[i] <- 3
+    }
+  }
+  return(hots)
+}
+```
+
+### Loading in the datasets
+```{r, echo = TRUE, results = 'hide'}
+PENGUINS <- read.csv("Data\\penguins_lter.csv")
+
+PENGUINS <- as.data.frame(PENGUINS)
+names(PENGUINS)
+str(PENGUINS)
+dim(PENGUINS)
+
+unique(PENGUINS$Species)
+```
+
+### Comments
+  The Penguin dataset contaings 17 parameters, with 344 observations. The target species are
+  - Adelie
+  - Chinstrap
+  - Gentoo
+  
+Parameters availible are: 
+  - Study Name
+  - Sample Number
+  - Region
+  - Island
+  - Stage
+  - Indiviaual.ID
+  - Clutch.Completion
+  - Data.Egg
+  - Culman.Length..mm. = (Bill length)
+  - Culman.Depth..mm. = (Bill depth)
+  - Flipper.Length..mm. 
+  - Body.Mass..g.
+  - Sex
+  - Delta.15.N..o.oo. 
+  - Delta.13.C..o.oo.
+  - Comments
+  
+The study is only interested in classifying penguins based on bill length, and flipper length. Therefor, the data will be reduced and renamed to allow for the initial objective to be clearly and easily answered. The name of each species is also simplified to their common name. The new data set will contain the following variables:
+  - Species (The Target)
+  - Culman.Length..mm. as "bill"
+  - Flipper.Length..mm. as "flipper"
+  
+```{r}
+penguins <- PENGUINS %>%
+  select(Species, Culmen.Length..mm., Flipper.Length..mm.) %>%
+  rename(
+    bill = Culmen.Length..mm.,
+    flipper = Flipper.Length..mm.
+  ) %>%
+  mutate(species = case_match(
+    Species,
+    "Adelie Penguin (Pygoscelis adeliae)"       ~ "Adelie",
+    "Chinstrap penguin (Pygoscelis antarctica)" ~ "Chinstrap",
+    "Gentoo penguin (Pygoscelis papua)"         ~ "Gentoo"
+  )) %>% select(-Species)
+
+str(penguins)
+colSums(is.na(penguins))
+
+# which(is.na(penguins$bill)) == which(is.na(penguins$flipper))
+penguins[which(is.na(penguins$bill)),]
+penguins <- penguins[-which(is.na(penguins$bill)),]
+
+dim(penguins)
+  
+```
+### Comments:
+The new data consists of 3 parameters with 342 observations. However, it seems that there are two missing datapoints for the 4th and 340th observation. In both cases the bill and flipper length are missing. Options are: 
+  1) Remove the two data points.
+  2) Fill the two points based on the mean of each species.
+  3) Use predictive modeling base on other parameters to estimate the values.
+  
+Unfortunatly the client is unable to be contacted for comments. (As this is a mock consultant project). Recommendation is to remove those two observations. Filling in with a mean (or median if there are outliers), may not increase the reliability of the overall model. Using predictive modeling will take time, and could lead to bias is the predictions are poor. Therefore, ignoring these values for now is safest, unless otherwise directed by the client. 
+
+### Building some Exploritory Analysis
+
+```{r}
+my_style <- list(
+  theme_minimal(),
+  scale_fill_brewer(palette = "Paired")
+)
+
+### Calculating Shapiro-Wilks test for Normality
+shapiro <- penguins %>%
+  group_by(species) %>%
+  summarize(
+    p_value_flipper = shapiro.test(flipper)$p.value,
+    p_value_bill = shapiro.test(bill)$p.value
+  )
+
+
+flipper_test <- shapiro.test(penguins$flipper)$p.value
+bill_test <- shapiro.test(penguins$bill)$p.value
+
+flipper_test
+bill_test
+### Look at the amount of each penguin type
+table(penguins$species)
+plot1 <- ggplot(data = penguins, aes(x = species, fill = species)) + 
+  geom_bar() + my_style
+
+box1 <- ggplot(data = penguins) +
+  geom_boxplot(aes(x = "Bill Length", y = bill), fill = "#CAB2D6", show.legend = FALSE)
+
+box2 <- ggplot(data = penguins) + 
+  geom_boxplot(aes(x = "Flipper Length", y = flipper), fill = "#FDBF6F", show.legend = FALSE)
+
+
+### consider the overall distribution of the parameters availible
+plot2 <- ggplot(data = penguins, aes(x = flipper, fill = species)) + 
+  geom_histogram(alpha = .8, position = "identity") + my_style
+
+plot3 <- ggplot(data = penguins, aes(x = bill, fill = species)) + 
+  geom_histogram(alpha = .8, position = "identity") + my_style
+
+### Checking for normality in the data:
+plot4 <- ggplot(data = penguins, aes(sample = flipper, color = species)) + 
+  geom_qq() +  geom_qq_line(alpha = .8) + 
+  my_style + facet_wrap(~ species) +
+  geom_text(data = shapiro, 
+            aes(label = round(p_value_flipper, 3)),
+            inherit.aes = FALSE, 
+            x = -1, y = 220)
+
+plot5 <- ggplot(data = penguins, aes(sample = bill, color = species)) + 
+  geom_qq() +  geom_qq_line(alpha = .8) + 
+  my_style + facet_wrap(~ species) +
+  geom_text(data = shapiro, 
+            aes(label = round(p_value_bill, 3)),
+            inherit.aes = FALSE, 
+            x = -1, y = 55)
+
+### Generating a plot for each section
+(plot1 | box1 | box2) / ( plot2| plot3) / (plot4 | plot5)
+
+
+```
+
+
+```{r}
+peng_mean <- aggregate(cbind(bill, flipper) ~ species, data = penguins, FUN = mean)
+peng_sd <- aggregate(cbind(bill, flipper) ~ species, data = penguins, FUN = sd)
+
+peng_meta <- cbind(peng_mean, peng_sd[,2:3])
+colnames(peng_meta)[c(4,5)] <- c("bill_sd", "flipper_sd")
+peng_meta
+
+manova <- manova(cbind((flipper), (bill)) ~ species, 
+                 data = penguins)
+
+summary.aov(manova)
+```
+
+
+### Comments:
+    The data set consists of roughly 150 Abelie, 48 Chinstrap, and 125 Gentoo penguin observations. The associated means are provided in the table below. MANOVA testing was used to ensure that there is a significant difference between the species in concern with bill length and flipper length. The associated F test produced values of 594.8 for flipper lenght, and 410.6 for bill length, producing p-values well below .05. This indicates that there is reason to believe the means of each species in flipper length and bill length are not equal. Thankfully, that will allow us to preform some clustering analysis to distinguish the species. 
+    Interestingly, when combined, the bill length and flipper length are normally distributed with a shapiro-wilks test producing p-values well below .05. When the data is grouped by species, the Abelie and Chinstrap maintain normality in both flipper and bill lengths. However, Gentoo's bill and flipper lengths are no longer normal. These exhibit some non-normality (particularly in the tails) with p-values of .002 and .013 (flipper, bill). As such, Linear Discriminate Anlysis maybe a poor choice for classification. Instead a multiclass (softmax) logistic regression will be suggested. 
+
+    
+```{r}
+peng_meta
+```
+
+
+
+### Inital Analysis
+
+```{r}
+## Splitting the model into test/train data
+size <- as.integer(length(penguins$species))
+
+set.seed(1497)
+split <- sort(sample(size, round(.8*size)))
+split      
+
+train <- penguins[split,]
+test <- penguins[-split,]
+dim(train)
+dim(test)
+
+```
+
+
+```{r}
+### Fitting the training model to Softmax - Logistic 
+fit <- multinom(species ~ flipper + bill, data = train)
+summary(fit)
+
+## Setting predictions based on test data
+preds <- predict(fit, newdata = as.data.frame(cbind(test)), type = "class")
+
+## Testing the fit of target
+predict(fit, newdata = as.data.frame(cbind("flipper" = 220, "bill" = 45), type = "class"))
+```
+
+```{r}
+## Constructing Confusion matrices, and loss values. 
+table(preds, test$species)
+con_df <- as.data.frame(table(Prediction = preds, Actual = test$species))
+
+ggplot(con_df, aes(x = Prediction, y = Actual, fill = Freq)) + geom_tile(color = "white", lwd = .5) + 
+  scale_fill_gradient(low = "#F4F6F7", high = "#33A02C") + geom_text(aes(label = Freq))
+
+## Calculating Cross Entropy Loss
+probs <- predict(fit, newdata = as.data.frame((test)), type = "prob")
+
+hot_actual <- model.matrix( ~ as.factor(test$species) - 1)
+prob_matrix <- pmax(probs, 1e-15) # to avoid inf errors
+cross_entropy <- -sum(hot_actual * log(prob_matrix)) / nrow(hot_actual)
+
+accuracy_rate <- (22 + 10 + 33)/(1 + 3 + 22 + 10 + 33)
+
+cross_entropy
+accuracy_rate
+
+```
+
+```{r}
+### Producing the final estimate:
+fit <- multinom(species ~ flipper + bill, data = penguins)
+summary(fit)
+
+## Classifying the target
+predict(fit, newdata = as.data.frame(cbind("flipper" = 220, "bill" = 45), type = "class"))
+
+```
+
+### Comments:
+The data was split into an 80/20 training/testing set, to assess model fit, and check for model accuracy. The model fits exceedingly well with a Log-Loss (Cross Entropy Loss) of only .102 and an accuracy of 94%. With that full model was fit for the entire data set and the client penguin was feed into the model. The projected penguin is the Gentoo species of penguin. 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
