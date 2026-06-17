@@ -16,6 +16,8 @@ library("dplyr")
 library("rlang")
 library("patchwork")
 library("nnet")
+library("performance")
+library("mvnormtest")
 
 ## Seed set to 1497
 set.seed(1497)
@@ -130,9 +132,14 @@ shapiro <- penguins %>%
 
 flipper_test <- shapiro.test(penguins$flipper)$p.value
 bill_test <- shapiro.test(penguins$bill)$p.value
-
 flipper_test
 bill_test
+
+mshapiro.test(t(penguins[which(penguins$species == "Adelie"), -3]))
+mshapiro.test(t(penguins[which(penguins$species == "Chinstrap"), -3]))
+mshapiro.test(t(penguins[which(penguins$species == "Gentoo"), -3]))
+
+cor(penguins[, c("bill", "flipper")])
 ### Look at the amount of each penguin type
 table(penguins$species)
 plot1 <- ggplot(data = penguins, aes(x = species, fill = species)) + 
@@ -173,6 +180,21 @@ plot5 <- ggplot(data = penguins, aes(sample = bill, color = species)) +
 (plot1 | box1 | box2) / ( plot2| plot3) / (plot4 | plot5)
 
 
+### Predictive Plot for Client
+plot6 <- ggplot(data = penguins, aes(x = flipper, y = bill, color = species)) + 
+  geom_point() + 
+  geom_point(data = NULL, aes(x = 220, y = 45, color = "Specimen"), size = 3) + 
+  #geom_smooth(method = "lm") + 
+  scale_color_manual(name = "All Groups", values = c("Adelie" = "#6a3d9a", "Chinstrap" = "#1F78B4","Gentoo" = "#33a02c", "Specimen" = "#FDBF6F")) + 
+  labs(
+    title = "Penguin Classification",
+    subtitle = "Grouping Penguins by Species, Flipper Length, and Bill Length",
+    x = "Flipper length (mm)",
+    y = "Bill length (mm)"
+  ) + 
+  theme_minimal()
+
+plot6
 ```
 
 
@@ -210,7 +232,6 @@ size <- as.integer(length(penguins$species))
 
 set.seed(1497)
 split <- sort(sample(size, round(.8*size)))
-split      
 
 train <- penguins[split,]
 test <- penguins[-split,]
@@ -224,12 +245,22 @@ dim(test)
 ### Fitting the training model to Softmax - Logistic 
 fit <- multinom(species ~ flipper + bill, data = train)
 summary(fit)
+AIC(fit)
+BIC(fit)
+
+fit2 <- multinom(species ~ bill, data = train)
+fit3 <- multinom(species ~ flipper, data = train)
+summary(fit2)
+summary(fit3)
 
 ## Setting predictions based on test data
-preds <- predict(fit, newdata = as.data.frame(cbind(test)), type = "class")
+test_variables <- test[,c("flipper", "bill")]
+preds <- predict(fit, newdata = test_variables, type = "class")
+preds2 <- predict(fit2, newdata = test_variables, type = "class")
+preds3 <- predict(fit3, newdata = test_variables, type = "class")
 
 ## Testing the fit of target
-predict(fit, newdata = as.data.frame(cbind("flipper" = 220, "bill" = 45), type = "class"))
+predict(fit, newdata = as.data.frame(cbind("flipper" = 220, "bill" = 45)), type = "class")
 ```
 
 ```{r}
@@ -240,6 +271,13 @@ con_df <- as.data.frame(table(Prediction = preds, Actual = test$species))
 ggplot(con_df, aes(x = Prediction, y = Actual, fill = Freq)) + geom_tile(color = "white", lwd = .5) + 
   scale_fill_gradient(low = "#F4F6F7", high = "#33A02C") + geom_text(aes(label = Freq))
 
+# fit 2
+table(preds2, test$species)
+
+# fit 3
+table(preds3, test$species)
+
+
 ## Calculating Cross Entropy Loss
 probs <- predict(fit, newdata = as.data.frame((test)), type = "prob")
 
@@ -247,7 +285,7 @@ hot_actual <- model.matrix( ~ as.factor(test$species) - 1)
 prob_matrix <- pmax(probs, 1e-15) # to avoid inf errors
 cross_entropy <- -sum(hot_actual * log(prob_matrix)) / nrow(hot_actual)
 
-accuracy_rate <- (22 + 10 + 33)/(1 + 3 + 22 + 10 + 33)
+accuracy_rate <- (22 + 10 + 33)/(1 + 2 + 22 + 10 + 33)
 
 cross_entropy
 accuracy_rate
